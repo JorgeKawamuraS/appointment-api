@@ -1,0 +1,115 @@
+openapi: 3.0.0
+info:
+  title: 'Appointment Api'
+  description: 'API para el manejo de citas médicas'
+  version: '1.0.0'
+components:
+  schemas:
+    CreateAppointmentResponse:
+      type: object
+      properties:
+        code:
+          type: string
+          description: Codigo el cual referencia la respuesta
+          example: "0000"
+        message:
+          type: string
+          description: Mensaje descriptivo sobre la operación
+          example: "Cita creada correctamente"
+    Appointment:
+      type: object
+      properties:
+        insuredId:
+          type: string
+          description: Código del asegurado de 5 dígitos
+          example: "00012"
+        scheduleId:
+          type: integer
+          description: Identificador del espacio agendado
+          example: 1
+        countryISO:
+          type: string
+          description: Código del país ("PE" o "CL")
+          example: "PE"
+    AppointmentResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            type: object
+            properties:
+              insuredId:
+                type: string
+                description: Código del asegurado de 5 dígitos
+                example: "00012"
+              scheduleId:
+                type: integer
+                description: Identificador del espacio agendado
+                example: 1
+              countryISO:
+                type: string
+                description: Código del país ("PE" o "CL")
+                example: "PE"
+              estado:
+                type: string
+                description: Estado de la cita
+                example: "completed"
+        message:
+          type: string
+tags:
+  - name: Citas
+    description: Operaciones relacionadas con citas de asegurados
+paths:
+  /appointments:
+    post:
+      operationId: createAppointment
+      summary: Crea una cita
+      tags:
+        - Citas
+      description: Permite registrar una nueva cita para un asegurado.
+      responses:
+        '200':
+          description: Cita creada correctamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppointmentResponse'
+  /appointments/{insuredId}:
+    get:
+      summary: Obtener todas las citas por insuredId
+      tags:
+        - Citas
+      description: Devuelve una lista de citas registradas en DynamoDB con el insuredId indicado.
+      operationId: getAllAppointmentsByInsuredId
+      parameters:
+        - name: insuredId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Operación exitosa
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Todas las operaciones se efectuaron correctamente
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Appointment"
+        "500":
+          description: Error interno del servidor
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  mensaje:
+                    type: string
+                    example: Error al obtener las citas

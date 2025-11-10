@@ -1,0 +1,260 @@
+org: jorgekawamura
+app: appointment
+service: appointment-api
+provider:
+  name: aws
+  runtime: nodejs20.x
+  region: us-east-1
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:*
+      Resource:
+        - arn:aws:dynamodb:us-east-1:510593089363:table/AppointmentsTable
+        - arn:aws:dynamodb:us-east-1:510593089363:table/AppointmentsTable/index/InsuredIdIndex
+    - Effect: Allow
+      Action:
+        - sns:Publish
+      Resource:
+        - arn:aws:sns:us-east-1:510593089363:AppointmentTopic
+    - Effect: Allow
+      Action:
+        - events:PutEvents
+      Resource:
+        - arn:aws:events:us-east-1:510593089363:event-bus/AppointmentBus
+  environment:
+    SNS_TOPIC: !Ref AppointmentTopic
+    DB_HOST: ${env:DB_HOST}
+    DB_USER: ${env:DB_USER}
+    DB_PASSWORD: ${env:DB_PASSWORD}
+    DB_PE: mysqlPe
+    DB_CL: mysqlCl
+
+functions:
+  appointment:
+    handler: dist/handlers/appointment/appointment.handler
+    events:
+      - http:
+          path: appointments
+          method: post
+          documentation:
+            summary: "Crea una cita"
+            description: "Permite registrar una nueva cita para un asegurado."
+            requestModels:
+              "application/json": CreateAppointmentModel
+            methodResponses:
+              - statusCode: 200
+                responseBody:
+                  description: "Cita creada correctamente"
+                responseModels:
+                  "application/json": AppointmentResponseModel
+      - http:
+          path: appointments/{insuredId}
+          method: get
+          documentation:
+            summary: "Obtiene una cita"
+            description: "Devuelve una cita a partir de su ID."
+            pathParams:
+              - name: "id"
+                description: "ID de la cita"
+                required: true
+                schema:
+                  type: string
+            methodResponses:
+              - statusCode: 200
+                responseModels:
+                  "application/json": AppointmentResponseModel
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - QueueAppointment
+              - Arn
+  appointment_pe:
+    handler: dist/handlers/appointment/appointment_pe.handler
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - QueuePe
+              - Arn
+  appointment_cl:
+    handler: dist/handlers/appointment/appointment_cl.handler
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - QueueCl
+              - Arn
+    
+resources:
+  Resources:  
+    AppointmentTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: AppointmentTopic
+
+    QueuePe:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: QueuePe
+
+    QueueCl:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: QueueCl
+
+    QueueAppointment:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: QueueAppointment
+
+    AppointmentEventBus:
+      Type: AWS::Events::EventBus
+      Properties:
+        Name: AppointmentBus
+
+    EventBridgeToSQSRule:
+      Type: AWS::Events::Rule
+      DependsOn: QueueAppointment
+      Properties:
+        Name: EventToSQSRule
+        EventBusName: !Ref AppointmentEventBus
+        EventPattern:
+          source:
+            - "appointment.pe"
+            - "appointment.cl"
+        Targets:
+          - Arn: !GetAtt QueueAppointment.Arn
+            Id: "SQSTarget"
+    
+    SubscriptionQueuePe:
+      Type: AWS::SNS::Subscription
+      Properties:
+        TopicArn:
+          Ref: AppointmentTopic
+        Protocol: sqs
+        Endpoint:
+          Fn::GetAtt:
+            - QueuePe
+            - Arn
+        FilterPolicy:
+          route:
+            - PE
+    
+    SubscriptionQueueCl:
+      Type: AWS::SNS::Subscription
+      Properties:
+        TopicArn:
+          Ref: AppointmentTopic
+        Protocol: sqs
+        Endpoint:
+          Fn::GetAtt:
+            - QueueCl
+            - Arn
+        FilterPolicy:
+          route:
+            - CL
+
+    SqsQueuePolicyPe:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        Queues:
+          - !Ref QueuePe
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal: "*"
+              Action: "sqs:SendMessage"
+              Resource: !GetAtt QueuePe.Arn
+              Condition:
+                ArnEquals:
+                  "aws:SourceArn": !Ref AppointmentTopic
+
+    SqsQueuePolicyCl:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        Queues:
+          - !Ref QueueCl
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal: "*"
+              Action: "sqs:SendMessage"
+              Resource: !GetAtt QueueCl.Arn
+              Condition:
+                ArnEquals:
+                  "aws:SourceArn": !Ref AppointmentTopic
+
+    SqsQueuePolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        Queues:
+          - !Ref QueueAppointment
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: events.amazonaws.com
+              Action: "sqs:SendMessage"
+              Resource: !GetAtt QueueAppointment.Arn
+
+    AppointmentsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: AppointmentsTable
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: appointment_id
+            AttributeType: S
+          - AttributeName: insured_id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: appointment_id
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: InsuredIdIndex
+            KeySchema:
+              - AttributeName: insured_id
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+
+plugins:
+  - serverless-offline
+  - serverless-offline-sns
+  - serverless-offline-sqs
+  - serverless-openapi-documentation
+
+custom:
+  documentation:
+    api:
+      info:
+        version: "1.0.0"
+        title: "Appointment API"
+        description: "API de citas médicas"
+    models:
+      - name: CreateAppointmentModel
+        description: "Modelo para crear una cita"
+        contentType: "application/json"
+        schema:
+          type: object
+          properties:
+            insuredId:
+              type: string
+            scheduleId:
+              type: number
+            countryISO:
+              type: string
+      - name: AppointmentResponseModel
+        description: "Respuesta con datos de la cita"
+        contentType: "application/json"
+        schema:
+          type: object
+          properties:
+            appointmentId:
+              type: string
+            status:
+              type: string
